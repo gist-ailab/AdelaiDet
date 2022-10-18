@@ -22,7 +22,7 @@ from .detection_utils import (annotations_to_instances, build_augmentation,
 This file contains the default mapping that's applied to "dataset dicts".
 """
 
-__all__ = ["DatasetMapperWithBasis"]
+__all__ = ["DatasetMapperWithBasis", "DatasetMapperWithOurs"]
 
 logger = logging.getLogger(__name__)
 

@@ -24,22 +24,33 @@ with open(root_path + 'annotations/coco_anns_clora_visible_val.json', 'r') as f:
 # print(annot)
 # img.save('img_0.png')
 
-imgId = 0
+imgId = 408
 coco = COCO(root_path + 'annotations/coco_anns_clora_visible_val.json')
 
-appleIds = coco.getCatIds(catNms=['apple'])
-annIds = coco.getAnnIds(imgIds=imgId, catIds=appleIds)
+
+
+cat_ids = sorted(coco.getCatIds())
+cats = coco.loadCats(cat_ids)
+# print(cat_ids)
+# print(cats)
+
+# appleIds = coco.getCatIds(catNms=['apple'])
+annIds = coco.getAnnIds(imgIds=imgId, catIds=cat_ids)
 anns = coco.loadAnns(annIds)
 print(annIds)
 
 imgInfo = coco.loadImgs(imgId)
-print(imgInfo)
+# print(imgInfo)
 img = Image.open(root_path + imgInfo[0]['file_name']).convert('RGB')
 # coco.showAnns(anns, draw_bbox=True)
-img.save('img_0.png')
+img.save(f'img_{imgId}.png')
 
+print(len(anns))
 mask = coco.annToMask(anns[0])
 for i in range(len(anns)):
-    mask += coco.annToMask(anns[i])
-mask_img = Image.fromarray(np.uint8(cm.gist_earth(mask)*255))
-mask_img.save('mask.png')
+    mask += coco.annToMask(anns[i]) * int(i/3)
+mask_img = Image.fromarray(np.uint8(cm.Accent(mask)*255))
+mask_img.save(f'mask_{imgId}.png')
+
+anns2 = coco.imgsToAnns[imgId]
+print(anns == anns2)
