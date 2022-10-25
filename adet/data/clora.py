@@ -41,7 +41,6 @@ def load_segm(anno, type):
             segm = None
     return segm
 
-
 def load_clora_data2_json(json_file, image_root, dataset_name=None, extra_annotation_keys=None):
     """
     Load a json file with uoais's instances annotation format.
@@ -70,18 +69,21 @@ def load_clora_data2_json(json_file, image_root, dataset_name=None, extra_annota
         1. This function does not read the image files.
            The results do not have the "image" field.
     """
+    from pycocotools.coco import COCO
+
     timer = Timer()
     json_file = PathManager.get_local_path(json_file)
     with contextlib.redirect_stdout(io.StringIO()):
         coco_api = COCO(json_file)
     if timer.seconds() > 1:
-        logger.info("Loading {} takes {:.2f} seconds. ".format(json_file, timer.seconds()))
+        logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
 
     id_map = None
     if dataset_name is not None:
         meta = MetadataCatalog.get(dataset_name)
         cat_ids = sorted(coco_api.getCatIds())
         cats = coco_api.loadCats(cat_ids)
+        print('## cats', cats)
         # The categories in a custom json file may not be sorted.
         thing_classes = [c["name"] for c in sorted(cats, key=lambda x: x["id"])]
         # meta.thing_classes = thing_classes
@@ -101,6 +103,7 @@ def load_clora_data2_json(json_file, image_root, dataset_name=None, extra_annota
 Category ids in annotations are not in [1, #categories]! We'll apply a mapping for you.
 """
                 )
+        # id_map = {v: i for i, v in enumerate(cat_ids)}
         if id_map is not None:
             meta.thing_dataset_id_to_contiguous_id = id_map
 
@@ -130,10 +133,87 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     #   'category_id': 16,
     #   'id': 42986},
     #  ...]
-    anns = [coco_api.imgsToAnns[img_id] for img_id in img_ids]
-    
+    anns = [coco_api.imgToAnns[img_id] for img_id in img_ids]
+    total_num_valid_anns = sum([len(x) for x in anns])
+    total_num_anns = len(coco_api.anns)
+    if total_num_valid_anns < total_num_anns:
+        logger.warning(
+            f"{json_file} contains {total_num_anns} annotations, but only "
+            f"{total_num_valid_anns} of them match to images in the file."
+        )
 
+    if "minival" not in json_file:
+        # The popular valminusminival & minival annotations for COCO2014 contain this bug.
+        # However the ratio of buggy annotations there is tiny and does not affect accuracy.
+        # Therefore we explicitly white-list them.
+        ann_ids = [ann["id"] for anns_per_image in anns for ann in anns_per_image]
+        assert len(set(ann_ids)) == len(ann_ids), "Annotation ids in '{}' are not unique!".format(
+            json_file
+        )
 
+    imgs_anns = list(zip(imgs, anns))
+    logger.info("Loaded {} images in COCO format from {}".format(len(imgs_anns), json_file))
 
+    dataset_dicts = []
+
+    ann_keys = ["iscrowd", "bbox", "keypoints", "category_id", ] + (extra_annotation_keys or [])
+
+    num_instances_without_valid_segmentation = 0
+    for (img_dict, anno_dict_list) in imgs_anns:
+        record = {}
+        record["file_name"] = os.path.join(image_root, img_dict["file_name"])
+        record["depth_file_name"] = os.path.join(image_root, img_dict["depth_file_name"])
+        record["height"] = img_dict["height"]
+        record["width"] = img_dict["width"]
+        image_id = record["image_id"] = img_dict["id"]
+
+        objs = []
+        for anno in anno_dict_list:
+            # Check that the image_id in this annotation is the same as
+            # the image_id we're looking at.
+            # This fails only when the data parsing logic or the annotation file is buggy.
+
+            # The original COCO valminusminival2014 & minival2014 annotation files
+            # actually contains bugs that, together with certain ways of using COCO API,
+            # can trigger this assertion.
+            assert anno["image_id"] == image_id
+
+            assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
+
+            obj = {key: anno[key] for key in ann_keys if key in anno}
+            if anno.get("segmentation", None):  # either list[list[float]] or dict(RLE)
+                obj["segmentation"] = load_segm(anno, "segmentation")
+            if anno.get("visible_mask", None): 
+                obj["visible_mask"] = load_segm(anno, "visible_mask")
+            if anno.get("occluded_mask", None):  
+                obj["occluded_mask"] = load_segm(anno, "occluded_mask")
+            obj["occluded_rate"] = anno.get("occluded_rate", None)
+
+            keypts = anno.get("keypoints", None)
+            if keypts:  # list[int]
+                for idx, v in enumerate(keypts):
+                    if idx % 3 != 2:
+                        # COCO's segmentation coordinates are floating points in [0, H or W],
+                        # but keypoint coordinates are integers in [0, H-1 or W-1]
+                        # Therefore we assume the coordinates are "pixel indices" and
+                        # add 0.5 to convert to floating point coordinates.
+                        keypts[idx] = v + 0.5
+                obj["keypoints"] = keypts
+
+            obj["bbox_mode"] = BoxMode.XYWH_ABS
+            obj["category_id"] = anno["category_id"]
+            objs.append(obj)
+        record["annotations"] = objs
+        dataset_dicts.append(record)
+
+    if num_instances_without_valid_segmentation > 0:
+        logger.warning(
+            "Filtered out {} instances without valid segmentation. ".format(
+                num_instances_without_valid_segmentation
+            )
+            + "There might be issues in your dataset generation process. "
+            "A valid polygon should be a list[float] with even length >= 6."
+        )
+    return dataset_dicts
 
 

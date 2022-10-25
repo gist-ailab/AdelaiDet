@@ -9,7 +9,7 @@ from matplotlib import cm
 from pycocotools.coco import COCO
 
 
-root_path = '/ailab_mat/dataset/AIHUB_data/data2/'
+root_path = '/ailab_mat/dataset/OccludedObjectDataset/ours/data2/'
 with open(root_path + 'annotations/coco_anns_clora_visible_val.json', 'r') as f:
     visible_val_json = json.load(f)
 
@@ -25,6 +25,7 @@ with open(root_path + 'annotations/coco_anns_clora_visible_val.json', 'r') as f:
 # img.save('img_0.png')
 
 imgId = 408
+# coco = COCO(root_path + 'annotations/coco_anns_clora_amodal_val.json')
 coco = COCO(root_path + 'annotations/coco_anns_clora_visible_val.json')
 
 
@@ -52,5 +53,6 @@ for i in range(len(anns)):
 mask_img = Image.fromarray(np.uint8(cm.Accent(mask)*255))
 mask_img.save(f'mask_{imgId}.png')
 
-anns2 = coco.imgsToAnns[imgId]
+anns2 = coco.imgToAnns[imgId]
 print(anns == anns2)
+print(anns[0])

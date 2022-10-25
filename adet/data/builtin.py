@@ -1,9 +1,12 @@
 import os
 
 from detectron2.data.datasets.register_coco import register_coco_instances
-from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
+# from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
+from .builtin_meta import _get_builtin_metadata
 
 from .datasets.text import register_text_instances
+from .register_clora_data2 import register_clora_data2_instances
+
 
 # register plane reconstruction
 
@@ -40,6 +43,7 @@ metadata_text = {
 }
 
 
+
 def register_all_coco(root="datasets"):
     for key, (image_root, json_file) in _PREDEFINED_SPLITS_PIC.items():
         # Assume pre-defined datasets live in `./datasets`.
@@ -60,3 +64,31 @@ def register_all_coco(root="datasets"):
 
 
 register_all_coco()
+
+
+_PREDEFINED_SPLITS_clora_data2 = {    
+    "clora_data2_train_amodal": ("OccludedObjectDataset/ours/data2", "OccludedObjectDataset/ours/data2/annotations/coco_anns_clora_amodal_train.json"),
+    "clora_data2_val_amodal": ("OccludedObjectDataset/ours/data2", "OccludedObjectDataset/ours/data2/annotations/coco_anns_clora_amodal_val.json"),
+    "clora_data2_test_amodal": ("OccludedObjectDataset/ours/data2", "OccludedObjectDataset/ours/data2/annotations/coco_anns_clora_amodal_test.json"),
+#     "clora_data2_train_visible": ("OccludedObjectDataset/ours/data2", "OccludedObjectDataset/ours/data2/annotations/coco_anns_clora_visible_train.json"),
+#     "clora_data2_val_visible": ("OccludedObjectDataset/ours/data2", "OccludedObjectDataset/ours/data2/annotations/coco_anns_clora_visible_val.json"),
+#     "clora_data2_test_visible": ("OccludedObjectDataset/ours/data2", "OccludedObjectDataset/ours/data2/annotations/coco_anns_clora_visible_test.json"),
+}
+
+def register_all_clora_data2(root="/ailab_mat/dataset"):
+    for key, (image_root, json_file) in _PREDEFINED_SPLITS_clora_data2.items():
+        # Assume pre-defined datasets live in `./datasets`.
+        amodal = 'coco' in key
+        print('## HSE ', key)
+        ## HSE ToDO: print(key)
+        md = "clora_data2"
+        register_clora_data2_instances(
+            key,
+            _get_builtin_metadata(md),
+            os.path.join(root, json_file) if "://" not in json_file else json_file,
+            os.path.join(root, image_root),
+            amodal=amodal
+        )
+
+
+register_all_clora_data2(root="/ailab_mat/dataset")

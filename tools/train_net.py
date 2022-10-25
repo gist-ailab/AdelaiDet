@@ -37,11 +37,13 @@ from detectron2.evaluation import (
 from detectron2.modeling import GeneralizedRCNNWithTTA
 from detectron2.utils.logger import setup_logger
 
-from adet.data.dataset_mapper import DatasetMapperWithBasis, DatasetMapperWithOurs
+from adet.data.dataset_mapper import DatasetMapperWithBasis
 from adet.data.fcpose_dataset_mapper import FCPoseDatasetMapper
 from adet.config import get_cfg
 from adet.checkpoint import AdetCheckpointer
 from adet.evaluation import TextEvaluator
+from adet.evaluation import VisibleEvaluator
+
 
 
 class Trainer(DefaultTrainer):
@@ -113,9 +115,7 @@ class Trainer(DefaultTrainer):
         It calls :func:`detectron2.data.build_detection_train_loader` with a customized
         DatasetMapper, which adds categorical labels as a semantic mask.
         """
-        if cfg.DATASETS.OURS:
-            mapper = DatasetMapperWithOurs(cfg, True)
-        elif cfg.MODEL.FCPOSE_ON:
+        if cfg.MODEL.FCPOSE_ON:
             mapper = FCPoseDatasetMapper(cfg, True)
         else:
             mapper = DatasetMapperWithBasis(cfg, True)
@@ -153,6 +153,9 @@ class Trainer(DefaultTrainer):
             return LVISEvaluator(dataset_name, cfg, True, output_folder)
         if evaluator_type == "text":
             return TextEvaluator(dataset_name, cfg, True, output_folder)
+        if evaluator_type == "visible":
+            evaluator_list.append(VisibleEvaluator(dataset_name, output_folder, use_fast_impl=False))
+
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(

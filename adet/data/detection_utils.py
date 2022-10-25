@@ -11,21 +11,107 @@ from detectron2.data.detection_utils import \
 
 import math
 
+from detectron2.structures import (
+    BitMasks,
+    Boxes,
+    BoxMode,
+    Instances,
+    Keypoints,
+    PolygonMasks,
+    RotatedBoxes,
+    polygons_to_bitmask,
+)
+import pycocotools.mask as mask_utils
+
+
+
+# def transform_instance_annotations(
+#     annotation, transforms, image_size, *, keypoint_hflip_indices=None
+# ):
+
+#     annotation = d2_transform_inst_anno(
+#         annotation,
+#         transforms,
+#         image_size,
+#         keypoint_hflip_indices=keypoint_hflip_indices,
+#     )
+
+#     if "beziers" in annotation:
+#         beziers = transform_beziers_annotations(annotation["beziers"], transforms)
+#         annotation["beziers"] = beziers
+#     return annotation
+
 def transform_instance_annotations(
     annotation, transforms, image_size, *, keypoint_hflip_indices=None
 ):
+    """
+    Apply transforms to box, segmentation and keypoints annotations of a single instance.
 
-    annotation = d2_transform_inst_anno(
-        annotation,
-        transforms,
-        image_size,
-        keypoint_hflip_indices=keypoint_hflip_indices,
-    )
+    It will use `transforms.apply_box` for the box, and
+    `transforms.apply_coords` for segmentation polygons & keypoints.
+    If you need anything more specially designed for each data structure,
+    you'll need to implement your own version of this function or the transforms.
 
-    if "beziers" in annotation:
-        beziers = transform_beziers_annotations(annotation["beziers"], transforms)
-        annotation["beziers"] = beziers
+    Args:
+        annotation (dict): dict of instance annotations for a single instance.
+            It will be modified in-place.
+        transforms (TransformList or list[Transform]):
+        image_size (tuple): the height, width of the transformed image
+        keypoint_hflip_indices (ndarray[int]): see `create_keypoint_hflip_indices`.
+
+    Returns:
+        dict:
+            the same input dict with fields "bbox", "segmentation", "keypoints"
+            transformed according to `transforms`.
+            The "bbox_mode" field will be set to XYXY_ABS.
+    """
+    if isinstance(transforms, (tuple, list)):
+        transforms = T.TransformList(transforms)
+    # bbox is 1d (per-instance bounding box)
+    bbox = BoxMode.convert(annotation["bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
+    # clip transformed bbox to image size
+    bbox = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
+    annotation["bbox"] = np.minimum(bbox, list(image_size + image_size)[::-1])
+    annotation["bbox_mode"] = BoxMode.XYXY_ABS
+
+    if "segmentation" in annotation:
+        annotation = transform_segm_in_anno(annotation, transforms, "segmentation")
+
+    if "visible_mask" in annotation:
+        annotation = transform_segm_in_anno(annotation, transforms, "visible_mask")
+        
+    if "occluded_mask" in annotation:
+        annotation = transform_segm_in_anno(annotation, transforms, "occluded_mask")
+
+        
     return annotation
+
+def mask_to_rle(mask):
+    rle = mask_utils.encode(mask)
+    rle['counts'] = rle['counts'].decode('ascii')
+    return rle
+
+def transform_segm_in_anno(annotation, transforms, key):
+    segm = annotation[key]
+    if isinstance(segm, list):
+        # polygons
+        polygons = [np.asarray(p).reshape(-1, 2) for p in segm]
+        annotation[key] = [
+            p.reshape(-1) for p in transforms.apply_polygons(polygons)
+        ]
+    elif isinstance(segm, dict):
+        # RLE
+        mask = mask_utils.decode(segm)
+        mask = transforms.apply_segmentation(mask)
+        annotation[key] = mask_to_rle(np.array(mask, dtype=np.uint8, order='F'))
+    else:
+        raise ValueError(
+            "Cannot transform segmentation of type '{}'!"
+            "Supported types are: polygons as list[list[float] or ndarray],"
+            " COCO-style RLE as a dict.".format(type(segm))
+        )
+    return annotation
+
 
 
 def transform_beziers_annotations(beziers, transforms):
@@ -50,22 +136,135 @@ def transform_beziers_annotations(beziers, transforms):
     return beziers
 
 
-def annotations_to_instances(annos, image_size, mask_format="polygon"):
-    instance = d2_anno_to_inst(annos, image_size, mask_format)
+# def annotations_to_instances(annos, image_size, mask_format="polygon"):
+#     instance = d2_anno_to_inst(annos, image_size, mask_format)
+
+#     if not annos:
+#         return instance
+
+#     # add attributes
+#     if "beziers" in annos[0]:
+#         beziers = [obj.get("beziers", []) for obj in annos]
+#         instance.beziers = torch.as_tensor(beziers, dtype=torch.float32)
+
+#     if "rec" in annos[0]:
+#         text = [obj.get("rec", []) for obj in annos]
+#         instance.text = torch.as_tensor(text, dtype=torch.int32)
+
+#     return instance
+
+
+def convert_to_mask(segms):
+    masks = []
+    for segm in segms:
+        if isinstance(segm, list):
+            # polygon
+            masks.append(polygons_to_bitmask(segm, *image_size))
+        elif isinstance(segm, dict):
+            # COCO RLE
+            masks.append(mask_utils.decode(segm))
+        elif isinstance(segm, np.ndarray):
+            assert segm.ndim == 2, "Expect segmentation of 2 dimensions, got {}.".format(
+                segm.ndim
+            )
+            # mask array
+            masks.append(segm)
+        else:
+            raise ValueError(
+                "Cannot convert segmentation of type '{}' to BitMasks!"
+                "Supported types are: polygons as list[list[float] or ndarray],"
+                " COCO-style RLE as a dict, or a binary segmentation mask "
+                " in a 2D numpy array of shape HxW.".format(type(segm))
+            )
+    return masks
+
+def merge_bitmask(masks):
+    return BitMasks(torch.stack([torch.from_numpy(x) for x in masks]))
+
+class_id_map = {
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 7, 
+    8: 8,
+    10: 9,
+    11: 10,
+    12: 11,
+    13: 12,
+    14: 13,
+    15: 14,
+    16: 15,
+    17: 16,
+    18: 17,
+    47: 18,
+    48: 19,
+    49: 20,
+    50: 21,
+    51: 22,
+    52: 23,
+    53: 24,
+    54: 25,
+    56: 26,
+    58: 27,
+    59: 28,
+    60: 29,
+    61: 30,
+    62: 31,
+    75: 32,
+    76: 33,
+    77: 34,
+    78: 35,
+    79: 36,
+    80: 37,
+    81: 38,
+    82: 39,
+    83: 40
+}
+
+def annotations_to_instances(annos, image_size, mask_format="polygon", amodal=False):
+    
+    boxes = [BoxMode.convert(obj["bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
+    target = Instances(image_size)
+    target.gt_boxes = Boxes(boxes)
+    if amodal:
+        occ_classes = [int(obj["occluded_rate"] >= 0.05) for obj in annos]
+        target.gt_occludeds = torch.tensor(occ_classes, dtype=torch.int64)
+
+    classes = [int(obj["category_id"]) for obj in annos]
+    ## HSE class remap
+    # classes = [class_id_map[clas]-1 for clas in classes]
+    # print('classes', classes)
+    # print('classes_remap', classes_remap)
+    
+    classes = torch.tensor(classes, dtype=torch.int64)
+    target.gt_classes = classes
+    # print('prev', classes, 'remap', classes_remap)
+
+    if len(annos) and "segmentation" in annos[0]:
+
+        if amodal:
+            amodal_masks = convert_to_mask([obj["segmentation"] for obj in annos])
+            visible_masks = convert_to_mask([obj["visible_mask"] for obj in annos])
+            occluded_masks = convert_to_mask([obj["occluded_mask"] for obj in annos])
+        else:
+            visible_masks = convert_to_mask([obj["segmentation"] for obj in annos])
+
+        if amodal:
+            target.gt_masks = merge_bitmask(amodal_masks)
+            target.gt_visible_masks = merge_bitmask(visible_masks)
+            target.gt_occluded_masks = merge_bitmask(occluded_masks)
+            target.gt_occluded_rate = torch.Tensor([obj["occluded_rate"] for obj in annos])
+        else:
+            target.gt_masks = merge_bitmask(visible_masks)
+            target.gt_boxes = target.gt_masks.get_bounding_boxes()
 
     if not annos:
-        return instance
+        return target
 
-    # add attributes
-    if "beziers" in annos[0]:
-        beziers = [obj.get("beziers", []) for obj in annos]
-        instance.beziers = torch.as_tensor(beziers, dtype=torch.float32)
-
-    if "rec" in annos[0]:
-        text = [obj.get("rec", []) for obj in annos]
-        instance.text = torch.as_tensor(text, dtype=torch.int32)
-
-    return instance
+    return target
 
 
 def build_augmentation(cfg, is_train):
